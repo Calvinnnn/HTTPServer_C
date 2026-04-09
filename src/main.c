@@ -6,6 +6,22 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include "response.h"
+int port =4221;
+
+
+
+int AcceptClientConnection(int server_fd,struct sockaddr_in *client_addr,socklen_t *client_addr_lens){
+    int client_fd;
+    client_fd = accept(server_fd, (struct sockaddr *)client_addr, client_addr_lens);
+    if (client_fd == -1) {
+        printf("Accept failed: %s\n", strerror(errno));
+    }
+    return client_fd;
+}
+
+
+
 
 int main() {
   // Disable output buffering
@@ -18,8 +34,9 @@ int main() {
 
   // TODO: Uncomment the code below to pass the first stage
 
-  int server_fd, client_addr_len;
+  int server_fd, client_addr_len,client_fd;
   struct sockaddr_in client_addr;
+  
 
   server_fd = socket(AF_INET, SOCK_STREAM, 0);
   if (server_fd == -1) {
@@ -38,7 +55,7 @@ int main() {
 
   struct sockaddr_in serv_addr = {
       .sin_family = AF_INET,
-      .sin_port = htons(4221),
+      .sin_port = htons(port),
       .sin_addr = {htonl(INADDR_ANY)},
   };
 
@@ -56,8 +73,19 @@ int main() {
   printf("Waiting for a client to connect...\n");
   client_addr_len = sizeof(client_addr);
 
+  client_fd = AcceptClientConnection(server_fd,&client_addr,&client_addr_len);
+  if (client_fd == -1) {
+        // Error already printed inside the function, or handle here
+        close(server_fd);
+        return 1;
+  }
+  
+  SendHTTPResponse(client_fd);
+
 
   close(server_fd);
+  close(client_fd);
+
 
   return 0;
 }

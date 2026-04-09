@@ -14,6 +14,7 @@
 *.out
 *.o
 
+
 # Ignore build directories
 /build/
 Debug/
