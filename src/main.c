@@ -34,8 +34,9 @@ int main() {
 
   // TODO: Uncomment the code below to pass the first stage
 
-  int server_fd, client_addr_len,client_fd;
+  int server_fd,client_fd;
   struct sockaddr_in client_addr;
+  socklen_t client_addr_len;
   
 
   server_fd = socket(AF_INET, SOCK_STREAM, 0);

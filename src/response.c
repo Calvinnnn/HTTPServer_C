@@ -9,6 +9,12 @@ char* CheckEccoExistsInPath(char *path){
     return result;
 }
 
+char* CheckUserAgentEndPoint(char* path){
+    char* target = "user-agent";
+    char* result = strstr(path,target);
+    return result;
+}
+
 
 void SendHTTPResponse(int client_fd){
 
@@ -28,6 +34,11 @@ void SendHTTPResponse(int client_fd){
         return;
     }
     char* result = CheckEccoExistsInPath(path);
+    char* user_agent_check_result = CheckUserAgentEndPoint(path);
+    printf("path: '%s'\n", path);
+        printf("result: %p\n", result);
+        printf("user_agent_check_result: %p\n", user_agent_check_result);
+        printf("buffer:\n%s\n", buffer);
     if (strcmp(path, "/") == 0) {
         snprintf(response, sizeof(response),
             "HTTP/1.1 200 OK\r\n"
@@ -37,7 +48,7 @@ void SendHTTPResponse(int client_fd){
             perror("send failed");
         }
     }
-    else if(result !=NULL ){
+    else if(result!=NULL){
         char* target_body = result + strlen("echo") +1;
         
         snprintf(response, sizeof(response),
@@ -51,6 +62,35 @@ void SendHTTPResponse(int client_fd){
         );
         if(send(client_fd,response,strlen(response),0)==-1){
             perror("send failed");
+        }
+    }
+    else if(user_agent_check_result!=NULL){
+        
+        char key[55];
+        char value[100];
+        char *line = strtok(buffer,"\r\n");
+        line = strtok(NULL, "\r\n");
+        while(line!=NULL){
+            if(sscanf(line,"%[^:]: %s",key,value)==2){
+                if(strcmp(key,"User-Agent")==0){
+                    snprintf(response,sizeof(response),
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: text/plain\r\n"
+                    "Content-Length: %d\r\n"
+                    "\r\n"
+                    "%s",
+                    (int) strlen(value),
+                    value
+                );
+
+                if(send(client_fd,response,strlen(response),0)==-1){
+                perror("send failed");
+                }
+                
+                    break;
+                }
+            }
+            line = strtok(NULL, "\r\n"); 
         }
     }
     else {
