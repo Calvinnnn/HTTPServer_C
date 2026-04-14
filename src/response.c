@@ -103,11 +103,16 @@ static const char *GetBody(const HttpRequest *req){
  
 static void SendResponse(int fd, int status, const char *status_text,
                          const char *content_type, const char *body) {
-    char response[4096];
     int body_len = body ? (int)strlen(body) : 0;
  
+    /* 256 bytes is more than enough for headers; add body length on top */
+    int buf_size = 256 + body_len;
+    char *response = malloc(buf_size);
+    if (!response) return;
+ 
+    int written;
     if (body && body_len > 0) {
-        snprintf(response, sizeof(response),
+        written = snprintf(response, buf_size,
             "HTTP/1.1 %d %s\r\n"
             "Content-Type: %s\r\n"
             "Content-Length: %d\r\n"
@@ -115,15 +120,17 @@ static void SendResponse(int fd, int status, const char *status_text,
             "%s",
             status, status_text, content_type, body_len, body);
     } else {
-        snprintf(response, sizeof(response),
+        written = snprintf(response, buf_size,
             "HTTP/1.1 %d %s\r\n"
             "Content-Length: 0\r\n"
             "\r\n",
             status, status_text);
     }
  
-    if (send(fd, response, strlen(response), 0) == -1)
-        perror("send failed");
+    if (written > 0)
+        send(fd, response, written, 0);
+ 
+    free(response);
 }
 
 /* ---------- FileCheck helper ---------- */
@@ -256,8 +263,44 @@ void SendHTTPResponse(int client_fd,const char* directory) {
 
 
     /* --- Route: POST / --- */
-    else if(strcasecmp(req.method,"POST")){
-        
+    else if(strcasecmp(req.method,"POST")==0){
+        if(strncmp(req.path,"/files/",7)==0){
+            char* file_name = req.path+7;
+            if(*file_name=='\0'){
+                SendResponse(client_fd,404,"Not Found",NULL,NULL);
+                return;
+            }
+            //security action can't go up one directory and can't access root system
+            //avoid attackers 
+            if (strstr(file_name, "..") != NULL || file_name[0] == '/') {
+            SendResponse(client_fd, 400, "Bad Request", "text/plain", "Invalid filename");
+            return;
+            }
+
+            char full_path[1024];
+            snprintf(full_path,sizeof(full_path),"%s/%s",directory,file_name);
+            const char *p_value = GetHeader(&req, "Content-Length");
+            if (!p_value) {
+                SendResponse(client_fd, 400, "Bad Request", NULL, NULL);
+                return;
+            }
+            int length = atoi(p_value);
+            
+            
+            char buff[length+1];
+            strncpy(buff, req.body, length);
+            buff[length] = '\0';
+            FILE *fptr;
+            
+            fptr = fopen(full_path, "wb");
+            if (!fptr) {
+            SendResponse(client_fd, 500, "Internal Server Error", NULL, NULL);
+            return;
+        }
+            fwrite(buff, 1, length, fptr);
+            fclose(fptr);
+            SendResponse(client_fd,201,"Created",NULL,NULL);
+        }
     }
 
 }
