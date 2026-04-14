@@ -7,6 +7,7 @@
 #define MAX_HEADERS 32
 #define HEADER_NAME_MAX 128
 #define HEADER_VALUE_MAX 512
+#define MAX_BODY_SIZE (10 * 1024 * 1024) 
  
 /* ---------- Data structures ---------- */
  
@@ -209,101 +210,152 @@ void SendHTTPResponse(int client_fd,const char* directory) {
                 SendResponse(client_fd, 400, "Bad Request", "text/plain", "Missing User-Agent header");
             }
         }
-        else if(strncmp(req.path, "/files/", 7) == 0){
-            
-            char * file_name = req.path+7;
-            if(*file_name=='\0'){
-                SendResponse(client_fd,404,"Not Found",NULL,NULL);
+              else if (strncmp(req.path, "/files/", 7) == 0) {
+            char *file_name = req.path + 7;
+ 
+            if (*file_name == '\0') {
+                SendResponse(client_fd, 404, "Not Found", NULL, NULL);
                 return;
             }
+ 
+            /*
+             * FIX #3: Path traversal guard.
+             * Without this, a request like GET /files/../../etc/passwd escapes
+             * the directory and lets an attacker read arbitrary files.
+             */
             if (strstr(file_name, "..") != NULL || file_name[0] == '/') {
                 SendResponse(client_fd, 400, "Bad Request", "text/plain", "Invalid filename");
                 return;
             }
-            
+ 
             char full_path[1024];
-            snprintf(full_path,sizeof(full_path),"%s/%s",directory,file_name);
-
-            bool file_exists = exists(full_path);
-            
-
-            if(file_exists){
-                long int size = findSize(full_path);
-                FILE *fp = fopen(full_path, "rb");
-                if (!fp) {
-                    SendResponse(client_fd,404,"Not Found",NULL,NULL);
-                    return;
-                }
-                char header[1024];
-                int header_len = snprintf(header, sizeof(header),
-                    "HTTP/1.1 200 OK\r\n"
-                    "Content-Type: application/octet-stream\r\n"
-                    "Content-Length: %ld\r\n"
-                    "\r\n",
-                    size);
-
-                send(client_fd, header, header_len, 0);
-                char buffer_file[1024];
-                size_t bytes_read;
-
-                while ((bytes_read = fread(buffer_file, 1, sizeof(buffer_file), fp)) > 0) {
-                    send(client_fd, buffer_file, bytes_read, 0);
-                }
-
+            snprintf(full_path, sizeof(full_path), "%s/%s", directory, file_name);
+ 
+            /*
+             * FIX #5: Eliminated TOCTOU race condition.
+             * Old code called exists() -> findSize() -> fopen() as 3 separate
+             * filesystem ops. A file could be deleted/replaced between any two.
+             * Now we open once and derive the size from the same handle.
+             */
+            FILE *fp = fopen(full_path, "rb");
+            if (!fp) {
+                SendResponse(client_fd, 404, "Not Found", NULL, NULL);
+                return;
+            }
+ 
+            fseek(fp, 0L, SEEK_END);
+            long size = ftell(fp);
+            rewind(fp);
+ 
+            if (size < 0) {
                 fclose(fp);
+                SendResponse(client_fd, 500, "Internal Server Error", NULL, NULL);
+                return;
             }
-            else{
-                SendResponse(client_fd,404,"Not Found",NULL,NULL);
+ 
+            char header[256];
+            int header_len = snprintf(header, sizeof(header),
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/octet-stream\r\n"
+                "Content-Length: %ld\r\n"
+                "\r\n",
+                size);
+ 
+            send(client_fd, header, header_len, 0);
+ 
+            char file_buf[4096];
+            size_t bytes_read;
+            while ((bytes_read = fread(file_buf, 1, sizeof(file_buf), fp)) > 0) {
+                send(client_fd, file_buf, bytes_read, 0);
             }
-            return ;
-
+ 
+            fclose(fp);
         }
  
-    /* --- 404 fallback --- */
+        /* --- 404 fallback --- */
         else {
             SendResponse(client_fd, 404, "Not Found", NULL, NULL);
         }
     }
+       
 
 
     /* --- Route: POST / --- */
-    else if(strcasecmp(req.method,"POST")==0){
-        if(strncmp(req.path,"/files/",7)==0){
-            char* file_name = req.path+7;
-            if(*file_name=='\0'){
-                SendResponse(client_fd,404,"Not Found",NULL,NULL);
+        else if (strcasecmp(req.method, "POST") == 0) {
+ 
+        if (strncmp(req.path, "/files/", 7) == 0) {
+            char *file_name = req.path + 7;
+ 
+            if (*file_name == '\0') {
+                SendResponse(client_fd, 404, "Not Found", NULL, NULL);
                 return;
             }
-            //security action can't go up one directory and can't access root system
-            //avoid attackers 
+ 
+            /*
+             * seciurty fix
+             */
             if (strstr(file_name, "..") != NULL || file_name[0] == '/') {
-            SendResponse(client_fd, 400, "Bad Request", "text/plain", "Invalid filename");
-            return;
+                SendResponse(client_fd, 400, "Bad Request", "text/plain", "Invalid filename");
+                return;
             }
-
-            char full_path[1024];
-            snprintf(full_path,sizeof(full_path),"%s/%s",directory,file_name);
-            const char *p_value = GetHeader(&req, "Content-Length");
-            if (!p_value) {
+ 
+            const char *cl_value = GetHeader(&req, "Content-Length");
+            if (!cl_value) {
                 SendResponse(client_fd, 400, "Bad Request", NULL, NULL);
                 return;
             }
-            int length = atoi(p_value);
-            
-            
-            char buff[length+1];
-            strncpy(buff, req.body, length);
-            buff[length] = '\0';
-            FILE *fptr;
-            
-            fptr = fopen(full_path, "wb");
+ 
+            /*
+             * FIX #1: Replaced VLA `char buff[length+1]` with malloc.
+             * VLAs sized from untrusted input can blow the stack or trigger
+             * undefined behaviour when length <= 0.
+             *
+             * FIX #2: Loop recv() until all body bytes are received.
+             * A single recv() into a 4096-byte buffer silently drops everything
+             * beyond that limit, producing a truncated file with no error.
+             */
+            int length = atoi(cl_value);
+            if (length <= 0 || length > MAX_BODY_SIZE) {
+                SendResponse(client_fd, 400, "Bad Request", NULL, NULL);
+                return;
+            }
+ 
+            char *buff = malloc(length + 1);
+            if (!buff) {
+                SendResponse(client_fd, 500, "Internal Server Error", NULL, NULL);
+                return;
+            }
+ 
+            /* Copy whatever body bytes arrived with the headers first */
+            int already_have = bytes_received - (int)(req.body - buffer);
+            if (already_have < 0) already_have = 0;
+            if (already_have > length) already_have = length;
+            memcpy(buff, req.body, already_have);
+ 
+            /* Keep reading until we have all `length` bytes */
+            int total = already_have;
+            while (total < length) {
+                int n = recv(client_fd, buff + total, length - total, 0);
+                if (n <= 0) break;
+                total += n;
+            }
+            buff[total] = '\0';
+ 
+            char full_path[1024];
+            snprintf(full_path, sizeof(full_path), "%s/%s", directory, file_name);
+ 
+            FILE *fptr = fopen(full_path, "wb");
             if (!fptr) {
-            SendResponse(client_fd, 500, "Internal Server Error", NULL, NULL);
-            return;
-        }
-            fwrite(buff, 1, length, fptr);
+                free(buff);
+                SendResponse(client_fd, 500, "Internal Server Error", NULL, NULL);
+                return;
+            }
+ 
+            fwrite(buff, 1, total, fptr);
             fclose(fptr);
-            SendResponse(client_fd,201,"Created",NULL,NULL);
+            free(buff);
+ 
+            SendResponse(client_fd, 201, "Created", NULL, NULL);
         }
     }
 
