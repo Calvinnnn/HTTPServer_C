@@ -74,15 +74,28 @@ int main() {
   printf("Waiting for a client to connect...\n");
   client_addr_len = sizeof(client_addr);
 
-  client_fd = AcceptClientConnection(server_fd,&client_addr,&client_addr_len);
-  if (client_fd == -1) {
+  
+  
+  
+ 
+    while (1) {
+    int client_fd = AcceptClientConnection(server_fd,&client_addr,&client_addr_len);
+      if (client_fd == -1) {
         // Error already printed inside the function, or handle here
         close(server_fd);
         return 1;
-  }
-  
-  SendHTTPResponse(client_fd);
+      }
+      if (fork() == 0) {
+        // CHILD PROCESS
+        SendHTTPResponse(client_fd);;
 
+        close(client_fd);
+        exit(0);
+    }
+
+    // PARENT PROCESS
+    close(client_fd); // parent doesn't need it
+  }
 
   close(server_fd);
   close(client_fd);
