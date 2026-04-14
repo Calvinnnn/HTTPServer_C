@@ -23,11 +23,18 @@ int AcceptClientConnection(int server_fd,struct sockaddr_in *client_addr,socklen
 
 
 
-int main() {
+int main(int argc,char*argv[]) {
   // Disable output buffering
   setbuf(stdout, NULL);
   setbuf(stderr, NULL);
+  const char *directory = "/tmp"; // default fallback
 
+    for (int i = 1; i < argc - 1; i++) {
+        if (strcmp(argv[i], "--directory") == 0) {
+            directory = argv[i + 1];
+            break;
+        }
+    }
   // You can use print statements as follows for debugging, they'll be visible
   // when running tests.
   printf("Logs from your program will appear here!\n");
@@ -87,7 +94,7 @@ int main() {
       }
       if (fork() == 0) {
         // CHILD PROCESS
-        SendHTTPResponse(client_fd);;
+        SendHTTPResponse(client_fd,directory);
 
         close(client_fd);
         exit(0);

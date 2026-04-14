@@ -3,7 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/socket.h>
- 
+#include <stdbool.h>
 #define MAX_HEADERS 32
 #define HEADER_NAME_MAX 128
 #define HEADER_VALUE_MAX 512
@@ -121,10 +121,51 @@ static void SendResponse(int fd, int status, const char *status_text,
     if (send(fd, response, strlen(response), 0) == -1)
         perror("send failed");
 }
+
+/* ---------- FileCheck helper ---------- */
+
+
+int exists(const char *fname)
+{
+    FILE *file;
+    if ((file = fopen(fname, "r")))
+    {
+        fclose(file);
+        return 1;
+    }
+    return 0;
+}
+long int findSize(char file_name[])
+{
+    // opening the file in read mode
+    FILE* fp = fopen(file_name, "r");
+
+    // checking if the file exist or not
+    if (fp == NULL) {
+        printf("File Not Found!\n");
+        return -1;
+    }
+
+    fseek(fp, 0L, SEEK_END);
+
+    // calculating the size of the file
+    long int res = ftell(fp);
+
+    // closing the file
+    fclose(fp);
+
+    return res;
+}
+
  
 /* ---------- Request handler ---------- */
+
+
+
+
+
  
-void SendHTTPResponse(int client_fd) {
+void SendHTTPResponse(int client_fd,const char* directory) {
     char buffer[4096];
     HttpRequest req;
  
@@ -155,6 +196,51 @@ void SendHTTPResponse(int client_fd) {
         } else {
             SendResponse(client_fd, 400, "Bad Request", "text/plain", "Missing User-Agent header");
         }
+    }
+    else if(strncmp(req.path, "/files/", 7) == 0){
+        
+        char * file_name = req.path+7;
+        if(*file_name=='\0'){
+            SendResponse(client_fd,404,"Not Found",NULL,NULL);
+            return;
+        }
+        
+        char full_path[1024];
+        snprintf(full_path,sizeof(full_path),"/%s/%s",directory,file_name);
+
+        bool file_exists = exists(full_path);
+        
+
+        if(file_exists){
+            long int size = findSize(full_path);
+            FILE *fp = fopen(full_path, "rb");
+            if (!fp) {
+                SendResponse(client_fd,404,"Not Found",NULL,NULL);
+                return;
+            }
+            char header[1024];
+            int header_len = snprintf(header, sizeof(header),
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/octet-stream\r\n"
+                "Content-Length: %ld\r\n"
+                "\r\n",
+                size);
+
+            send(client_fd, header, header_len, 0);
+            char buffer_file[1024];
+            size_t bytes_read;
+
+            while ((bytes_read = fread(buffer_file, 1, sizeof(buffer_file), fp)) > 0) {
+                send(client_fd, buffer_file, bytes_read, 0);
+            }
+
+            fclose(fp);
+        }
+        else{
+            SendResponse(client_fd,404,"Not Found",NULL,NULL);
+        }
+        return ;
+
     }
  
     /* --- 404 fallback --- */

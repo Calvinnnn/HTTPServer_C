@@ -3,7 +3,7 @@
 
 
 
-void SendHTTPResponse(int client_fd);
+void SendHTTPResponse(int client_fd, const char *directory);
 
 
 
