@@ -94,6 +94,10 @@ static const char *GetHeader(const HttpRequest *req, const char *name) {
     }
     return NULL;
 }
+
+static const char *GetBody(const HttpRequest *req){
+    return req->body;
+}
  
 /* ---------- Response helper ---------- */
  
@@ -179,73 +183,82 @@ void SendHTTPResponse(int client_fd,const char* directory) {
     }
  
     /* --- Route: GET / --- */
-    if (strcmp(req.path, "/") == 0) {
+    if(strcasecmp(req.method,"GET")==0){
+        if (strcmp(req.path, "/") == 0) {
         SendResponse(client_fd, 200, "OK", NULL, NULL);
-    }
+        }
  
     /* --- Route: GET /echo/<text> --- */
-    else if (strncmp(req.path, "/echo/", 6) == 0) {
-        SendResponse(client_fd, 200, "OK", "text/plain", req.path + 6);
-    }
- 
+        else if (strncmp(req.path, "/echo/", 6) == 0) {
+            SendResponse(client_fd, 200, "OK", "text/plain", req.path + 6);
+        }
+    
     /* --- Route: GET /user-agent --- */
-    else if (strcmp(req.path, "/user-agent") == 0) {
-        const char *ua = GetHeader(&req, "User-Agent");
-        if (ua) {
-            SendResponse(client_fd, 200, "OK", "text/plain", ua);
-        } else {
-            SendResponse(client_fd, 400, "Bad Request", "text/plain", "Missing User-Agent header");
+        else if (strcmp(req.path, "/user-agent") == 0) {
+            const char *ua = GetHeader(&req, "User-Agent");
+            if (ua) {
+                SendResponse(client_fd, 200, "OK", "text/plain", ua);
+            } else {
+                SendResponse(client_fd, 400, "Bad Request", "text/plain", "Missing User-Agent header");
+            }
         }
-    }
-    else if(strncmp(req.path, "/files/", 7) == 0){
-        
-        char * file_name = req.path+7;
-        if(*file_name=='\0'){
-            SendResponse(client_fd,404,"Not Found",NULL,NULL);
-            return;
-        }
-        
-        char full_path[1024];
-        snprintf(full_path,sizeof(full_path),"/%s/%s",directory,file_name);
-
-        bool file_exists = exists(full_path);
-        
-
-        if(file_exists){
-            long int size = findSize(full_path);
-            FILE *fp = fopen(full_path, "rb");
-            if (!fp) {
+        else if(strncmp(req.path, "/files/", 7) == 0){
+            
+            char * file_name = req.path+7;
+            if(*file_name=='\0'){
                 SendResponse(client_fd,404,"Not Found",NULL,NULL);
                 return;
             }
-            char header[1024];
-            int header_len = snprintf(header, sizeof(header),
-                "HTTP/1.1 200 OK\r\n"
-                "Content-Type: application/octet-stream\r\n"
-                "Content-Length: %ld\r\n"
-                "\r\n",
-                size);
+            
+            char full_path[1024];
+            snprintf(full_path,sizeof(full_path),"%s/%s",directory,file_name);
 
-            send(client_fd, header, header_len, 0);
-            char buffer_file[1024];
-            size_t bytes_read;
+            bool file_exists = exists(full_path);
+            
 
-            while ((bytes_read = fread(buffer_file, 1, sizeof(buffer_file), fp)) > 0) {
-                send(client_fd, buffer_file, bytes_read, 0);
+            if(file_exists){
+                long int size = findSize(full_path);
+                FILE *fp = fopen(full_path, "rb");
+                if (!fp) {
+                    SendResponse(client_fd,404,"Not Found",NULL,NULL);
+                    return;
+                }
+                char header[1024];
+                int header_len = snprintf(header, sizeof(header),
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: application/octet-stream\r\n"
+                    "Content-Length: %ld\r\n"
+                    "\r\n",
+                    size);
+
+                send(client_fd, header, header_len, 0);
+                char buffer_file[1024];
+                size_t bytes_read;
+
+                while ((bytes_read = fread(buffer_file, 1, sizeof(buffer_file), fp)) > 0) {
+                    send(client_fd, buffer_file, bytes_read, 0);
+                }
+
+                fclose(fp);
             }
+            else{
+                SendResponse(client_fd,404,"Not Found",NULL,NULL);
+            }
+            return ;
 
-            fclose(fp);
         }
-        else{
-            SendResponse(client_fd,404,"Not Found",NULL,NULL);
-        }
-        return ;
-
-    }
  
     /* --- 404 fallback --- */
-    else {
-        SendResponse(client_fd, 404, "Not Found", NULL, NULL);
+        else {
+            SendResponse(client_fd, 404, "Not Found", NULL, NULL);
+        }
     }
+
+
+    /* --- Route: POST / --- */
+    else if(strcasecmp(req.method,"POST")){
+        
+    }
+
 }
  
