@@ -216,6 +216,10 @@ void SendHTTPResponse(int client_fd,const char* directory) {
                 SendResponse(client_fd,404,"Not Found",NULL,NULL);
                 return;
             }
+            if (strstr(file_name, "..") != NULL || file_name[0] == '/') {
+                SendResponse(client_fd, 400, "Bad Request", "text/plain", "Invalid filename");
+                return;
+            }
             
             char full_path[1024];
             snprintf(full_path,sizeof(full_path),"%s/%s",directory,file_name);
